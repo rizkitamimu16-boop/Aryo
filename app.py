@@ -8,6 +8,9 @@ from werkzeug.utils import secure_filename
 from kneed import KneeLocator
 import io
 
+# --- Konfigurasi Global ---
+last_result_df = None
+
 # --- Konfigurasi Locale ---
 try:
     locale.setlocale(locale.LC_NUMERIC, "id_ID.UTF-8")
@@ -68,43 +71,31 @@ def clean_numeric_series(s: pd.Series) -> pd.Series:
     s = s.str.replace(",", ".", regex=False)
     return pd.to_numeric(s, errors="coerce")
 
-# --- Logika Penentuan K Optimal (UPDATE BARU) ---
+# --- Logika Penentuan K Optimal ---
 def find_optimal_k(wcss_list, k_values):
-    # 1️⃣ Metode Elbow utama (KneeLocator)
-    kn = KneeLocator(
-        k_values, wcss_list,
-        curve="convex", direction="decreasing"
-    )
+    kn = KneeLocator(k_values, wcss_list, curve="convex", direction="decreasing")
     if kn.knee is not None:
         return int(kn.knee)
-
-    # 2️⃣ Second derivative (penurunan WCSS terbesar)
     diffs = []
     for i in range(1, len(wcss_list) - 1):
         diff = (wcss_list[i - 1] - wcss_list[i]) - (wcss_list[i] - wcss_list[i + 1])
         diffs.append(diff)
-
     if diffs:
-        return diffs.index(max(diffs)) + 2  # offset index
-
-    # 3️⃣ Heuristik ilmiah (akar jumlah data)
+        return diffs.index(max(diffs)) + 2
     return max(2, int(len(k_values) ** 0.5))
 
 # --- Fungsi K-Means Internal ---
 def run_kmeans_internal(data, k, max_iter=100):
     if len(data) < k:
         return None, None, []
-    
     random.seed(42)
     centroids = random.sample(data, k)
     centroid_history = [centroids.copy()]
-    
     for _ in range(max_iter):
         clusters = {i: [] for i in range(k)}
         for point in data:
             distances = [euclidean(point, c) for c in centroids]
             clusters[distances.index(min(distances))].append(point)
-        
         new_centroids = []
         for i in range(k):
             if clusters[i]:
@@ -112,13 +103,10 @@ def run_kmeans_internal(data, k, max_iter=100):
                 new_centroids.append(new_c)
             else:
                 new_centroids.append(centroids[i])
-        
         centroid_history.append(new_centroids.copy())
-        
         if new_centroids == centroids:
             break
         centroids = new_centroids
-        
     wcss = 0
     for i in range(k):
         for point in clusters[i]:
@@ -128,6 +116,7 @@ def run_kmeans_internal(data, k, max_iter=100):
 # --- Route Utama ---
 @app.route("/", methods=["GET", "POST"])
 def index():
+    global last_result_df
     error = None
     elbow_data = []
     optimal_k = session.get('optimal_k')
@@ -151,8 +140,6 @@ def index():
 
         try:
             if not file or file.filename == "":
-                # Jika aksi adalah run_cluster tanpa upload ulang, kita butuh data lama
-                # Namun untuk simpelnya, kode ini mewajibkan upload saat klik tombol
                 raise ValueError("File dataset wajib diunggah")
 
             os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
@@ -178,7 +165,6 @@ def index():
             df_scaled, _, _ = min_max_scaler(aggregated, cluster_cols)
             data_to_cluster = df_scaled[cluster_cols].values.tolist()
 
-            # 🔹 TAHAP 1 — ANALISIS ELBOW (K_RANGE 2-10)
             wcss_list = []
             k_range = range(2, min(11, len(data_to_cluster)))
 
@@ -187,29 +173,37 @@ def index():
                 wcss_list.append(wcss)
                 elbow_data.append({"k": k, "wcss": wcss})
 
-            # Menggunakan fungsi penentuan K optimal yang baru
             optimal_k = find_optimal_k(wcss_list, list(k_range))
             session['optimal_k'] = optimal_k
 
-            # 🔹 TAHAP 2 — JALANKAN CLUSTER
+          # 🔹 TAHAP 2 — JALANKAN CLUSTER
             if action == "run_cluster":
                 manual_k = request.form.get("manual_k")
                 used_k = int(manual_k) if manual_k and manual_k.isdigit() else optimal_k
                 
                 _, centroids, centroid_process = run_kmeans_internal(data_to_cluster, used_k)
                 
+                # 2. Tentukan label cluster (angka)
                 labels = []
                 for point in data_to_cluster:
                     distances = [euclidean(point, c) for c in centroids]
                     labels.append(distances.index(min(distances)))
-
                 aggregated["cluster"] = labels
+
+                # 3. Assign Label Nama (Sangat Laku, dll)
+                label_map = auto_cluster_labels(aggregated)
+                aggregated["kategori_label"] = aggregated["cluster"].map(label_map)
+
+                # 4. Update Variabel Global & Session agar sinkron
+                last_result_df = aggregated.copy()
+                session['result_data'] = aggregated.to_dict('records')
+                session['centroid_process'] = centroid_process
+
+                # Keperluan dashboard web
                 result_data = aggregated
                 cluster_summary = aggregated.groupby("cluster").size()
                 products_by_cluster = {i: aggregated[aggregated["cluster"] == i] for i in range(used_k)}
-
-                session['result_data'] = result_data.to_dict('records')
-                session['centroid_process'] = centroid_process
+                # INTEGRASI GLOBAL END
 
         except Exception as e:
             error = str(e)
@@ -229,26 +223,105 @@ def index():
         used_k=used_k,
         products_by_cluster=products_by_cluster
     )
+def auto_cluster_labels(df):
+    """
+    Memberi nama cluster otomatis berdasarkan ranking penjualan_total.
+    Akan menghasilkan urutan: Sangat Laku, Sedang, Kurang Laku, Lainnya.
+    """
+    cluster_stats = (
+        df.groupby("cluster")
+        .agg(
+            avg_penjualan=("penjualan_total", "mean")
+        )
+        .sort_values(by="avg_penjualan", ascending=False)
+    )
 
-# --- Route Baru: Download Excel ---
+    # Urutan label disesuaikan dengan dashboard Anda
+    base_labels = [
+        "Sangat Laku",  # Rank 1 (Tertinggi)
+        "Sedang",       # Rank 2
+        "Kurang Laku",  # Rank 3
+        "Lainnya"       # Rank 4
+    ]
+
+    label_map = {}
+    for i, cluster_id in enumerate(cluster_stats.index):
+        if i < len(base_labels):
+            label_map[cluster_id] = base_labels[i]
+        else:
+            label_map[cluster_id] = f"Cluster {i+1}"
+            
+    return label_map
+
+# --- Route Download Excel (Diperbarui dengan global last_result_df) ---
 @app.route('/download_excel')
 def download_excel():
-    if 'result_data' not in session:
-        return "Data belum tersedia untuk diexport", 400
-    
-    df = pd.DataFrame(session['result_data'])
+    global last_result_df
+
+    if last_result_df is None or last_result_df.empty:
+        flash("Data belum tersedia. Jalankan K-Means terlebih dahulu.", "error")
+        return redirect(url_for('index'))
+
+    # Pastikan data yang di-download adalah versi terbaru yang sudah ada labelnya
     output = io.BytesIO()
+
+    # Menyusun urutan kolom agar lebih rapi di Excel
+    cols = last_result_df.columns.tolist()
+    # Memindahkan 'cluster' dan 'kategori_label' ke bagian depan/belakang jika perlu
+    
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Hasil Clustering')
+        last_result_df.to_excel(
+            writer,
+            index=False,
+            sheet_name='Hasil Clustering'
+        )
+        
+        # Opsional: Mempercantik tampilan Excel (Auto-fit kolom)
+        workbook  = writer.book
+        worksheet = writer.sheets['Hasil Clustering']
+        for i, col in enumerate(last_result_df.columns):
+            column_len = max(last_result_df[col].astype(str).str.len().max(), len(col)) + 2
+            worksheet.set_column(i, i, column_len)
+
     output.seek(0)
 
     return send_file(
         output,
         as_attachment=True,
-        download_name='hasil_kmeans.xlsx',
+        download_name='hasil_segmentasi_kmeans.xlsx',
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
+@app.route('/download_guide')
+def download_guide():
+    content = """
+PANDUAN PENGGUNAAN APLIKASI K-MEANS MINI MARKET
+
+1. Unggah file CSV yang berisi kolom:
+   - Produk
+   - Harga Satuan
+   - Jumlah Terjual
+   - Tanggal
+
+2. Data akan dimasukkan dan diproses oleh sistem.
+
+3. Penentuan nilai K:
+   - Biarkan kolom K kosong untuk menggunakan nilai K otomatis (Elbow Method).
+   - Atau isi nilai K secara manual (1–10).
+
+4. Jalankan proses K-Means.
+
+5. Lihat hasil clustering produk berdasarkan segmentasi penjualan.
+
+6. Unduh hasil segmentasi dalam format Excel.
+"""
+    return send_file(
+        io.BytesIO(content.encode('utf-8')),
+        as_attachment=True,
+        download_name="Panduan_KMeans_MiniMarket.txt",
+        mimetype="text/plain"
+    )
+
 
 if __name__ == "__main__":
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=10000)

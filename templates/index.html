@@ -65,28 +65,51 @@
         .bg-cluster-8\/20 { background-color: rgba(100, 116, 139, 0.2); }
         .text-cluster-9 { color: #f59e0b; }
         .bg-cluster-9\/20 { background-color: rgba(245, 158, 11, 0.2); }
-        .layout-container { max-width: 1400px; margin: 0 auto; }
+        .layout-container { max-width: 1200px; margin: 0 auto; }
+        .layout-container { 
+        max-width: 1150px; 
+        margin: 0 auto; 
+    }
+    
+    /* Membuat tabel lebih compact */
+    .product-row td {
+        padding-top: 0.75rem;
+        padding-bottom: 0.75rem;
+    }
+
+    /* Memperkecil tinggi chart sedikit agar tidak memakan layar */
+    #elbowChart {
+        max-height: 320px;
+    }
     </style>
 </head>
 <body class="font-display bg-background-light dark:bg-background-dark text-[#111714] dark:text-white antialiased overflow-x-hidden">
 
 <div class="relative flex h-auto min-h-screen w-full flex-col">
-    <header class="flex items-center justify-between border-b border-gray-200 dark:border-border-dark px-6 md:px-10 py-4 bg-white dark:bg-[#111714]">
-        <div class="flex items-center gap-4">
-            <div class="size-8 flex items-center justify-center text-primary">
-                <span class="material-symbols-outlined !text-[32px]">scatter_plot</span>
+    <header class="border-b border-gray-200 dark:border-border-dark bg-white dark:bg-[#111714] sticky top-0 z-40">
+    <div class="max-w-6xl mx-auto flex items-center justify-between px-6 py-3">
+        <div class="flex items-center gap-3">
+            <div class="text-primary">
+                <span class="material-symbols-outlined !text-[28px]">scatter_plot</span>
             </div>
-            <h2 class="text-[#111714] dark:text-white text-xl font-bold">K-Means Mini Market</h2>
+            <h2 class="text-[#111714] dark:text-white text-lg font-bold tracking-tight">K-Means Mini Market</h2>
         </div>
-    </header>
 
-    <div class="layout-container flex h-full grow flex-col">
+        <button onclick="toggleGuide()" 
+            class="flex items-center justify-center size-9 rounded-full border border-border-dark hover:bg-white/10 transition">
+            <span class="material-symbols-outlined text-primary text-xl">help</span>
+        </button>
+    </div>
+</header>
+
+   <div class="max-w-6xl mx-auto w-full flex h-full grow flex-col">
+    <div class="px-6 py-8">
         <div class="px-6 md:px-12 lg:px-20 py-8">
             <div class="flex flex-col gap-8 w-full">
                 
                 <div class="flex flex-col gap-2">
-                    <h1 class="text-3xl md:text-4xl font-black">Product Segmentation</h1>
-                    <p class="text-gray-600 dark:text-text-secondary">Analisis menggunakan <b>Library Kneed</b> untuk deteksi Elbow otomatis.</p>
+                    <h1 class="text-3xl md:text-4xl font-black">Mini Market Product Segmentation</h1>
+                    <p class="text-gray-600 dark:text-text-secondary">Analisis Penjualan Terlaris Menggunakan <b>K-means & Elbow Function </b>Untuk Menentukkan Nilai K Terbaik.</p>
                 </div>
 
                 {% if error %}
@@ -386,7 +409,62 @@
         }
     });
 }
+function toggleGuide() {
+    const modal = document.getElementById('guideModal');
+    modal.classList.toggle('hidden');
+    modal.classList.toggle('flex');
+}
 </script>
+<div id="guideModal" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50">
+    <div class="bg-white dark:bg-surface-dark rounded-2xl max-w-xl w-full p-6 border border-border-dark relative">
+        
+        <button onclick="toggleGuide()" 
+            class="absolute top-4 right-4 text-text-secondary hover:text-primary">
+            <span class="material-symbols-outlined">close</span>
+        </button>
 
+        <h3 class="text-xl font-bold mb-4 flex items-center gap-2 text-primary">
+    <span class="material-symbols-outlined">help</span>
+    Panduan Penggunaan Aplikasi
+</h3>
+
+<ol class="list-decimal list-inside space-y-2 text-sm text-gray-600 dark:text-text-secondary">
+    <li>
+        Unggah file <b>CSV</b> yang berisi kolom:
+        <ul class="list-disc list-inside ml-4 mt-1">
+            <li>Produk</li>
+            <li>Harga Satuan</li>
+            <li>Jumlah Terjual</li>
+            <li>Tanggal</li>
+        </ul>
+    </li>
+
+    <li>Data akan dimasukkan dan diproses oleh sistem.</li>
+
+    <li>
+        Penentuan nilai <b>K</b>:
+        <ul class="list-disc list-inside ml-4 mt-1">
+            <li>Biarkan kolom <b>K</b> kosong untuk menggunakan nilai <b>K otomatis</b> (Elbow Method).</li>
+            <li>Atau isi nilai <b>K</b> secara manual (<b>1–10</b>).</li>
+        </ul>
+    </li>
+
+    <li>Jalankan proses <b>K-Means</b>.</li>
+
+    <li>Lihat hasil clustering produk berdasarkan segmentasi penjualan.</li>
+
+    <li>Unduh hasil segmentasi dalam format <b>Excel</b>.</li>
+</ol>
+
+
+        <div class="mt-6 flex justify-end">
+            <a href="{{ url_for('download_guide') }}"
+               class="px-4 py-2 bg-primary text-black rounded-full font-bold text-sm flex items-center gap-2">
+                <span class="material-symbols-outlined text-sm">download</span>
+                Download Panduan
+            </a>
+        </div>
+    </div>
+</div>
 </body>
 </html>
